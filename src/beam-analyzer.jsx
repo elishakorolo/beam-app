@@ -526,7 +526,8 @@ const styles = {
   },
   sidebar: {
     width: '20rem',
-    background: 'rgba(255, 255, 255, 0.8)',
+    minWidth: '20rem',
+    background: 'rgba(255, 255, 255, 0.95)',
     backdropFilter: 'blur(20px)',
     borderRight: '1px solid #e5e7eb',
     padding: '1.5rem',
@@ -657,6 +658,18 @@ export default function App() {
 
   const [results, setResults] = useState(null);
   const [activeTab, setActiveTab] = useState('nodes');
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const addNode = () => {
     const newId = nodes.length;
@@ -717,10 +730,36 @@ export default function App() {
     <div style={styles.container}>
       {/* Header */}
       <header style={styles.header}>
-        <div style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 style={styles.title}>Beam Analyzer</h1>
-            <p style={styles.subtitle}>Slope-Deflection Analysis & Design</p>
+        <div style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {/* Hamburger — mobile only */}
+            {isMobile && (
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.5rem',
+                  padding: '0.5rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#374151',
+                  flexShrink: 0,
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6"/>
+                  <line x1="3" y1="12" x2="21" y2="12"/>
+                  <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+              </button>
+            )}
+            <div>
+              <h1 style={styles.title}>Beam Analyzer</h1>
+              <p style={styles.subtitle}>Slope-Deflection Analysis & Design</p>
+            </div>
           </div>
           <button
             onClick={analyze}
@@ -733,9 +772,33 @@ export default function App() {
         </div>
       </header>
 
-      <div style={{ display: 'flex' }}>
-        {/* Sidebar */}
-        <aside style={styles.sidebar}>
+      {/* Mobile overlay backdrop */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            zIndex: 40, top: '80px'
+          }}
+        />
+      )}
+
+      <div style={{ display: 'flex', position: 'relative' }}>
+        {/* Sidebar — sticky on desktop, overlay drawer on mobile */}
+        <aside style={
+          isMobile
+            ? {
+                ...styles.sidebar,
+                position: 'fixed',
+                top: '80px',
+                left: 0,
+                zIndex: 50,
+                transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+                transition: 'transform 0.3s ease',
+                boxShadow: '4px 0 20px rgba(0,0,0,0.15)',
+              }
+            : styles.sidebar
+        }>
           <div style={{ display: 'flex', gap: '0.25rem', background: '#f3f4f6', padding: '0.25rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
             {['nodes', 'loads', 'design'].map((tab) => (
               <button
@@ -1029,7 +1092,7 @@ export default function App() {
           {results ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               {/* Summary Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
                 <div style={{ ...styles.gradientCard, background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' }}>
                   <div style={{ fontSize: '0.75rem', color: '#1e40af', marginBottom: '0.5rem' }}>Max Moment</div>
                   <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{results.maxMoment.toFixed(3)}</div>
@@ -1052,7 +1115,7 @@ export default function App() {
               <div style={styles.resultCard}>
                 <h3 style={{ ...styles.sectionTitle, marginBottom: '1rem' }}>Design Output</h3>
                 {designParams.material === 'concrete' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
                     <div>
                       <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Depth</div>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{results.design.depth}</div>
@@ -1073,7 +1136,7 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
                     <div>
                       <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Required Z</div>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{results.design.requiredZ.toFixed(1)}</div>
@@ -1244,6 +1307,13 @@ export default function App() {
         button:hover {
           opacity: 0.9;
         }
+        @media (max-width: 767px) {
+          table th:nth-child(4), table td:nth-child(4),
+          table th:nth-child(5), table td:nth-child(5) {
+            display: none;
+          }
+        }
+        * { box-sizing: border-box; }
       `}</style>
     </div>
   );

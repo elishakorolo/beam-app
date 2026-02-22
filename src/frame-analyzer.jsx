@@ -508,7 +508,8 @@ const styles = {
   },
   sidebar: {
     width: '20rem',
-    background: 'rgba(255, 255, 255, 0.8)',
+    minWidth: '20rem',
+    background: 'rgba(255, 255, 255, 0.95)',
     backdropFilter: 'blur(20px)',
     borderRight: '1px solid #e5e7eb',
     padding: '1.5rem',
@@ -646,6 +647,18 @@ export default function App() {
   const [results, setResults] = useState(null);
   const [view, setView] = useState('structure');
   const [activePanel, setActivePanel] = useState('nodes');
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const addNode = () => {
     const newId = nodes.length;
@@ -745,10 +758,36 @@ export default function App() {
     <div style={styles.container}>
       {/* Header */}
       <header style={styles.header}>
-        <div style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 style={styles.title}>Frame Analyzer</h1>
-            <p style={styles.subtitle}>Slope-Deflection Analysis & Design - Clear Diagrams</p>
+        <div style={{ padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {/* Hamburger — mobile only */}
+            {isMobile && (
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.5rem',
+                  padding: '0.5rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#374151',
+                  flexShrink: 0,
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6"/>
+                  <line x1="3" y1="12" x2="21" y2="12"/>
+                  <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+              </button>
+            )}
+            <div>
+              <h1 style={styles.title}>Frame Analyzer</h1>
+              <p style={styles.subtitle}>Slope-Deflection Analysis & Design - Clear Diagrams</p>
+            </div>
           </div>
           <button
             onClick={analyze}
@@ -761,9 +800,33 @@ export default function App() {
         </div>
       </header>
 
-      <div style={{ display: 'flex' }}>
-        {/* Left Sidebar */}
-        <aside style={styles.sidebar}>
+      {/* Mobile overlay backdrop */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            zIndex: 40, top: '80px'
+          }}
+        />
+      )}
+
+      <div style={{ display: 'flex', position: 'relative' }}>
+        {/* Left Sidebar — sticky on desktop, overlay drawer on mobile */}
+        <aside style={
+          isMobile
+            ? {
+                ...styles.sidebar,
+                position: 'fixed',
+                top: '80px',
+                left: 0,
+                zIndex: 50,
+                transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+                transition: 'transform 0.3s ease',
+                boxShadow: '4px 0 20px rgba(0,0,0,0.15)',
+              }
+            : styles.sidebar
+        }>
           {/* Material */}
           <section style={{ marginBottom: '1.5rem' }}>
             <h3 style={styles.sectionTitle}>Material</h3>
@@ -994,9 +1057,9 @@ export default function App() {
         </aside>
 
         {/* Main Content */}
-        <main style={{ flex: 1, padding: '2rem' }}>
+        <main style={{ flex: 1, padding: isMobile ? '1rem' : '2rem', minWidth: 0 }}>
           {/* View Selector */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
             {['structure', 'bmd', 'sfd'].map(v => (
               <button
                 key={v}
@@ -1012,7 +1075,7 @@ export default function App() {
           </div>
 
           {/* Frame Structure View - Always Show */}
-          <div style={{ height: '400px', marginBottom: '1.5rem', background: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #e5e7eb' }}>
+          <div style={{ height: isMobile ? '280px' : '400px', marginBottom: '1.5rem', background: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #e5e7eb' }}>
             <FrameView nodes={nodes} members={members} results={results?.analyzer} mode="structure" />
           </div>
 
@@ -1024,7 +1087,7 @@ export default function App() {
                 <h3 style={{ ...styles.sectionTitle, marginBottom: '1rem' }}>
                   {view === 'bmd' ? '📊 Bending Moment Diagrams' : '📊 Shear Force Diagrams'}
                 </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
                   {(() => {
                     const allValues = [];
                     for (const m of members) {
@@ -1087,13 +1150,14 @@ export default function App() {
                         <XAxis 
                           dataKey="x" 
                           stroke="#6b7280" 
-                          tick={{ fill: '#6b7280', fontSize: 12 }}
-                          label={{ value: 'Distance (m)', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
+                          tick={{ fill: '#6b7280', fontSize: 11 }}
+                          label={isMobile ? undefined : { value: 'Distance (m)', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
                         />
                         <YAxis 
                           stroke="#6b7280" 
-                          tick={{ fill: '#6b7280', fontSize: 12 }}
-                          label={{ value: view === 'bmd' ? 'Moment (kN·m)' : 'Shear (kN)', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
+                          tick={{ fill: '#6b7280', fontSize: 11 }}
+                          width={isMobile ? 45 : 60}
+                          label={isMobile ? undefined : { value: view === 'bmd' ? 'Moment (kN·m)' : 'Shear (kN)', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
                         />
                         <Tooltip 
                           contentStyle={{ 
@@ -1114,7 +1178,7 @@ export default function App() {
                         />
                       </AreaChart>
                     </ResponsiveContainer>
-                    <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', fontSize: '0.875rem' }}>
+                    <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.75rem', fontSize: '0.875rem' }}>
                       <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0.5rem' }}>
                         <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Start</div>
                         <div style={{ fontWeight: 'bold', color: '#1e3a8a' }}>
@@ -1149,7 +1213,7 @@ export default function App() {
           {/* Results */}
           {results && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ ...styles.gradientCard, background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' }}>
                   <div style={{ fontSize: '0.75rem', color: '#1e40af', marginBottom: '0.5rem' }}>Max Beam Moment</div>
                   <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{results.maxMB.toFixed(2)}</div>
@@ -1172,7 +1236,7 @@ export default function App() {
               </div>
 
               {/* Design Results */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
                 {results.beamDes && (
                   <div style={styles.resultCard}>
                     <h3 style={{ ...styles.sectionTitle, marginBottom: '1rem' }}>Beam Design</h3>
