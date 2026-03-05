@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 // ============================================================================
 // FRAME ANALYSIS ENGINE
@@ -317,10 +316,115 @@ function FrameView({ nodes, members, results, mode }) {
 
     const w = maxX - minX || 10;
     const h = maxY - minY || 10;
-    const pad = Math.max(w, h) * 0.2;
+    // Extra padding for diagram arms sticking out perpendicularly
+    const pad = Math.max(w, h) * (mode !== 'structure' && results ? 0.45 : 0.2);
 
     setViewBox(`${minX - pad} ${minY - pad} ${w + 2 * pad} ${h + 2 * pad}`);
-  }, [nodes]);
+  }, [nodes, mode, results]);
+
+  // Compute a scale factor so the tallest diagram arm = ~25% of frame size
+  let diagramScale = 0;
+  if (results && mode !== 'structure') {
+    let maxVal = 0;
+    for (const m of members) {
+      const data = results.analyzer.getDiagram(m.id, mode, 50);
+      for (const d of data) maxVal = Math.max(maxVal, Math.abs(d.val));
+    }
+    if (maxVal > 1e-6) {
+      const xs = nodes.map(n => n.x);
+      const ys = nodes.map(n => n.y);
+      const w = (Math.max(...xs) - Math.min(...xs)) || 10;
+      const h = (Math.max(...ys) - Math.min(...ys)) || 10;
+      diagramScale = (Math.max(w, h) * 0.28) / maxVal;
+    }
+  }
+
+  const renderDiagramOnMember = (m) => {
+    if (!results || mode === 'structure' || diagramScale === 0) return null;
+    const nA = nodes.find(n => n.id === m.start);
+    const nB = nodes.find(n => n.id === m.end);
+    const dx = nB.x - nA.x;
+    const dy = nB.y - nA.y;
+    const L = Math.sqrt(dx * dx + dy * dy);
+    if (L < 1e-6) return null;
+
+    const cosA = dx / L;
+    const sinA = dy / L;
+    // Perpendicular unit vector (90° CCW)
+    const px = -sinA;
+    const py = cosA;
+
+    const color = mode === 'bmd' ? '#10b981' : '#3b82f6';
+    const data = results.analyzer.getDiagram(m.id, mode, 80);
+
+    const tips = data.map(({ s, val }) => {
+      const bx = nA.x + s * cosA;
+      const by = nA.y + s * sinA;
+      return { bx, by, tx: bx + val * diagramScale * px, ty: by + val * diagramScale * py, val, s };
+    });
+
+    const polyPoints = [
+      `${nA.x},${nA.y}`,
+      ...tips.map(t => `${t.tx},${t.ty}`),
+      `${nB.x},${nB.y}`
+    ].join(' ');
+
+    // Key value labels: start, end, and local extremes
+    const labelCandidates = [tips[0], tips[tips.length - 1]];
+    // Find local max/min in between
+    let peakIdx = -1, peakAbs = 0;
+    for (let i = 1; i < tips.length - 1; i++) {
+      if (Math.abs(tips[i].val) > peakAbs) { peakAbs = Math.abs(tips[i].val); peakIdx = i; }
+    }
+    if (peakIdx > 0 && peakAbs > Math.max(Math.abs(tips[0].val), Math.abs(tips[tips.length-1].val)) * 1.1) {
+      labelCandidates.push(tips[peakIdx]);
+    }
+
+    return (
+      <g key={`diag-${m.id}`}>
+        {/* Filled area between member and diagram curve */}
+        <polygon points={polyPoints} fill={color} fillOpacity={0.15} stroke="none" />
+        {/* Diagram curve */}
+        <polyline
+          points={tips.map(t => `${t.tx},${t.ty}`).join(' ')}
+          fill="none" stroke={color} strokeWidth={0.06} strokeLinejoin="round"
+        />
+        {/* Zero-crossing tick marks and dashed leaders */}
+        {tips[0] && (
+          <line x1={tips[0].bx} y1={tips[0].by} x2={tips[0].tx} y2={tips[0].ty}
+            stroke={color} strokeWidth={0.03} strokeDasharray="0.08 0.06" />
+        )}
+        {tips[tips.length - 1] && (
+          <line x1={tips[tips.length-1].bx} y1={tips[tips.length-1].by}
+            x2={tips[tips.length-1].tx} y2={tips[tips.length-1].ty}
+            stroke={color} strokeWidth={0.03} strokeDasharray="0.08 0.06" />
+        )}
+        {/* Value labels (flipped back to read correctly) */}
+        {labelCandidates.map((t, i) => {
+          const offset = 0.22;
+          return (
+            <g key={`lbl-${i}`} transform={`scale(1,-1)`}>
+              <rect
+                x={t.tx + px * offset - 0.28}
+                y={-(t.ty + py * offset) - 0.12}
+                width={0.56} height={0.22}
+                fill="rgba(255,255,255,0.85)"
+                rx={0.05}
+              />
+              <text
+                x={t.tx + px * offset}
+                y={-(t.ty + py * offset) + 0.07}
+                fontSize={0.17} fill={color}
+                textAnchor="middle" fontFamily="monospace" fontWeight="bold"
+              >
+                {t.val.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
 
   const renderSupport = (n) => {
     const size = 0.3;
@@ -329,9 +433,7 @@ function FrameView({ nodes, members, results, mode }) {
         <g key={`sup-${n.id}`}>
           <polygon
             points={`${n.x},${n.y} ${n.x - size},${n.y + size * 1.5} ${n.x + size},${n.y + size * 1.5}`}
-            fill="#60a5fa"
-            stroke="#1e40af"
-            strokeWidth="0.05"
+            fill="#60a5fa" stroke="#1e40af" strokeWidth="0.05"
           />
           <line x1={n.x - size * 1.2} y1={n.y + size * 1.5} x2={n.x + size * 1.2} y2={n.y + size * 1.5} stroke="#1e40af" strokeWidth="0.1" />
         </g>
@@ -341,14 +443,10 @@ function FrameView({ nodes, members, results, mode }) {
         <g key={`sup-${n.id}`}>
           <rect x={n.x - size} y={n.y - size} width={size * 2} height={size * 2} fill="#f59e0b" stroke="#b45309" strokeWidth="0.05" />
           {[...Array(4)].map((_, i) => (
-            <line
-              key={i}
-              x1={n.x - size}
-              y1={n.y - size + i * size / 2}
-              x2={n.x + size}
-              y2={n.y - size + i * size / 2}
-              stroke="#78350f"
-              strokeWidth="0.02"
+            <line key={i}
+              x1={n.x - size} y1={n.y - size + i * size / 2}
+              x2={n.x + size} y2={n.y - size + i * size / 2}
+              stroke="#78350f" strokeWidth="0.02"
             />
           ))}
         </g>
@@ -358,9 +456,7 @@ function FrameView({ nodes, members, results, mode }) {
         <g key={`sup-${n.id}`}>
           <polygon
             points={`${n.x},${n.y} ${n.x - size},${n.y + size * 1.2} ${n.x + size},${n.y + size * 1.2}`}
-            fill="#10b981"
-            stroke="#065f46"
-            strokeWidth="0.05"
+            fill="#10b981" stroke="#065f46" strokeWidth="0.05"
           />
           <circle cx={n.x - size * 0.5} cy={n.y + size * 1.5} r={size * 0.2} fill="white" stroke="#065f46" strokeWidth="0.03" />
           <circle cx={n.x + size * 0.5} cy={n.y + size * 1.5} r={size * 0.2} fill="white" stroke="#065f46" strokeWidth="0.03" />
@@ -370,68 +466,54 @@ function FrameView({ nodes, members, results, mode }) {
     return null;
   };
 
+  const titleText = mode === 'bmd' ? 'Bending Moment Diagram' : mode === 'sfd' ? 'Shear Force Diagram' : 'Frame Structure';
+  const titleColor = mode === 'bmd' ? '#059669' : mode === 'sfd' ? '#2563eb' : '#1f2937';
+
   return (
     <svg ref={svgRef} viewBox={viewBox} style={{ width: '100%', height: '100%', transform: 'scaleY(-1)' }}>
       {/* Title */}
-      <g transform={`scale(1, -1)`}>
+      <g transform="scale(1,-1)">
         <rect
           x={nodes.length > 0 ? Math.min(...nodes.map(n => n.x)) - 0.5 : 0}
           y={-(nodes.length > 0 ? Math.max(...nodes.map(n => n.y)) + 1.2 : 5)}
-          width="3"
-          height="0.4"
-          fill="rgba(255, 255, 255, 0.95)"
-          stroke="#e5e7eb"
-          strokeWidth="0.03"
-          rx="0.1"
+          width={3.5} height={0.4}
+          fill="rgba(255,255,255,0.95)" stroke="#e5e7eb" strokeWidth="0.03" rx="0.1"
         />
         <text
           x={nodes.length > 0 ? Math.min(...nodes.map(n => n.x)) - 0.3 : 0.2}
           y={-(nodes.length > 0 ? Math.max(...nodes.map(n => n.y)) + 0.9 : 4.8)}
-          fontSize="0.2"
-          fill="#1f2937"
-          fontWeight="bold"
-          fontFamily="sans-serif"
+          fontSize="0.22" fill={titleColor} fontWeight="bold" fontFamily="sans-serif"
         >
-          Frame Structure
+          {titleText}
         </text>
       </g>
-      
-      {/* Members */}
+
+      {/* Members (structural lines) */}
       {members.map(m => {
         const nA = nodes.find(n => n.id === m.start);
         const nB = nodes.find(n => n.id === m.end);
         return (
-          <line
-            key={`mem-${m.id}`}
-            x1={nA.x}
-            y1={nA.y}
-            x2={nB.x}
-            y2={nB.y}
-            stroke="#94a3b8"
-            strokeWidth="0.15"
-            strokeLinecap="round"
+          <line key={`mem-${m.id}`}
+            x1={nA.x} y1={nA.y} x2={nB.x} y2={nB.y}
+            stroke="#94a3b8" strokeWidth="0.15" strokeLinecap="round"
           />
         );
       })}
 
-      {/* Member Labels */}
+      {/* Diagram overlays */}
+      {members.map(m => renderDiagramOnMember(m))}
+
+      {/* Member number labels */}
       {members.map(m => {
         const nA = nodes.find(n => n.id === m.start);
         const nB = nodes.find(n => n.id === m.end);
         const midX = (nA.x + nB.x) / 2;
         const midY = (nA.y + nB.y) / 2;
         return (
-          <g key={`mem-label-${m.id}`} transform={`scale(1, -1)`}>
+          <g key={`mem-label-${m.id}`} transform="scale(1,-1)">
             <circle cx={midX} cy={-midY} r="0.2" fill="white" stroke="#3b82f6" strokeWidth="0.04" />
-            <text
-              x={midX}
-              y={-midY + 0.07}
-              fontSize="0.15"
-              fill="#3b82f6"
-              fontWeight="bold"
-              textAnchor="middle"
-              fontFamily="monospace"
-            >
+            <text x={midX} y={-midY + 0.07} fontSize="0.15" fill="#3b82f6"
+              fontWeight="bold" textAnchor="middle" fontFamily="monospace">
               {m.id + 1}
             </text>
           </g>
@@ -445,15 +527,9 @@ function FrameView({ nodes, members, results, mode }) {
       {nodes.map(n => (
         <g key={`node-${n.id}`}>
           <circle cx={n.x} cy={n.y} r="0.15" fill="#f59e0b" stroke="#b45309" strokeWidth="0.04" />
-          <g transform={`scale(1, -1)`}>
-            <text
-              x={n.x + 0.25}
-              y={-n.y + 0.05}
-              fontSize="0.18"
-              fill="#1f2937"
-              fontWeight="bold"
-              fontFamily="sans-serif"
-            >
+          <g transform="scale(1,-1)">
+            <text x={n.x + 0.25} y={-n.y + 0.05} fontSize="0.18" fill="#1f2937"
+              fontWeight="bold" fontFamily="sans-serif">
               {n.id + 1}
             </text>
           </g>
@@ -462,6 +538,7 @@ function FrameView({ nodes, members, results, mode }) {
     </svg>
   );
 }
+
 
 // ============================================================================
 // STYLES
@@ -1074,141 +1151,46 @@ export default function App() {
             ))}
           </div>
 
-          {/* Frame Structure View - Always Show */}
-          <div style={{ height: isMobile ? '280px' : '400px', marginBottom: '1.5rem', background: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #e5e7eb' }}>
-            <FrameView nodes={nodes} members={members} results={results?.analyzer} mode="structure" />
+          {/* Unified Frame View — structure, BMD, and SFD all rendered on the frame */}
+          <div style={{ height: isMobile ? '320px' : '520px', marginBottom: '1.5rem', background: 'white', borderRadius: '1rem', padding: '1rem', border: '1px solid #e5e7eb' }}>
+            <FrameView nodes={nodes} members={members} results={results} mode={view} />
           </div>
 
-          {/* Member Diagrams - Show when BMD or SFD selected */}
-          {results && view !== 'structure' && (
-            <>
-              {/* Diagram Summary */}
+          {/* Stats summary — only shown after analysis and when viewing diagrams */}
+          {results && view !== 'structure' && (() => {
+            const allValues = [];
+            for (const m of members) {
+              const data = results.analyzer.getDiagram(m.id, view);
+              allValues.push(...data.map(d => d.val));
+            }
+            const maxVal = Math.max(...allValues.map(v => Math.abs(v)));
+            const maxPos = Math.max(...allValues);
+            const maxNeg = Math.min(...allValues);
+            return (
               <div style={{ ...styles.resultCard, marginBottom: '1.5rem', background: 'linear-gradient(135deg, #dbeafe, #f0f9ff)' }}>
                 <h3 style={{ ...styles.sectionTitle, marginBottom: '1rem' }}>
-                  {view === 'bmd' ? '📊 Bending Moment Diagrams' : '📊 Shear Force Diagrams'}
+                  {view === 'bmd' ? '📊 Bending Moment Summary' : '📊 Shear Force Summary'}
                 </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
-                  {(() => {
-                    const allValues = [];
-                    for (const m of members) {
-                      const data = results.analyzer.getDiagram(m.id, view);
-                      allValues.push(...data.map(d => d.val));
-                    }
-                    const maxVal = Math.max(...allValues.map(v => Math.abs(v)));
-                    const maxPos = Math.max(...allValues);
-                    const maxNeg = Math.min(...allValues);
-                    
-                    return (
-                      <>
-                        <div>
-                          <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginBottom: '0.5rem', fontWeight: '600' }}>Maximum Value</div>
-                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{maxVal.toFixed(3)}</div>
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginBottom: '0.5rem', fontWeight: '600' }}>Max Positive</div>
-                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#059669' }}>{maxPos.toFixed(3)}</div>
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginBottom: '0.5rem', fontWeight: '600' }}>Max Negative</div>
-                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#dc2626' }}>{maxNeg.toFixed(3)}</div>
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
-                        </div>
-                      </>
-                    );
-                  })()}
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginBottom: '0.5rem', fontWeight: '600' }}>Maximum</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1e3a8a' }}>{maxVal.toFixed(3)}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#059669', marginBottom: '0.5rem', fontWeight: '600' }}>Max Positive</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#059669' }}>{maxPos.toFixed(3)}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#dc2626', marginBottom: '0.5rem', fontWeight: '600' }}>Max Negative</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#dc2626' }}>{maxNeg.toFixed(3)}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{view === 'bmd' ? 'kN·m' : 'kN'}</div>
+                  </div>
                 </div>
               </div>
-
-              {/* Individual Member Diagrams */}
-              {members.map((member) => {
-                const diagramData = results.analyzer.getDiagram(member.id, view, 100);
-                const chartData = diagramData.map(d => ({
-                  x: d.s.toFixed(2),
-                  value: d.val
-                }));
-                const res = results.memberResults.get(member.id);
-
-                return (
-                  <div key={member.id} style={{ ...styles.resultCard, marginBottom: '1.5rem' }}>
-                    <h3 style={{ ...styles.sectionTitle, marginBottom: '1rem' }}>
-                      Member {member.id + 1} - {view === 'bmd' ? 'Bending Moment' : 'Shear Force'}
-                      <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#6b7280', marginLeft: '0.5rem' }}>
-                        (Node {member.start + 1} → Node {member.end + 1}, L = {res.L.toFixed(2)}m)
-                      </span>
-                    </h3>
-                    <ResponsiveContainer width="100%" height={250}>
-                      <AreaChart data={chartData}>
-                        <defs>
-                          <linearGradient id={`${view}-grad-${member.id}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={view === 'bmd' ? '#10b981' : '#3b82f6'} stopOpacity={0.5} />
-                            <stop offset="100%" stopColor={view === 'bmd' ? '#10b981' : '#3b82f6'} stopOpacity={0.1} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis 
-                          dataKey="x" 
-                          stroke="#6b7280" 
-                          tick={{ fill: '#6b7280', fontSize: 11 }}
-                          label={isMobile ? undefined : { value: 'Distance (m)', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
-                        />
-                        <YAxis 
-                          stroke="#6b7280" 
-                          tick={{ fill: '#6b7280', fontSize: 11 }}
-                          width={isMobile ? 45 : 60}
-                          label={isMobile ? undefined : { value: view === 'bmd' ? 'Moment (kN·m)' : 'Shear (kN)', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            background: 'white', 
-                            border: '1px solid #e5e7eb', 
-                            borderRadius: '0.5rem',
-                            fontSize: '0.875rem'
-                          }}
-                          formatter={(value) => [value.toFixed(3), view === 'bmd' ? 'Moment' : 'Shear']}
-                          labelFormatter={(label) => `Distance: ${label} m`}
-                        />
-                        <Area 
-                          type="monotone" 
-                          dataKey="value" 
-                          stroke={view === 'bmd' ? '#10b981' : '#3b82f6'} 
-                          strokeWidth={2} 
-                          fill={`url(#${view}-grad-${member.id})`} 
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                    <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.75rem', fontSize: '0.875rem' }}>
-                      <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0.5rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Start</div>
-                        <div style={{ fontWeight: 'bold', color: '#1e3a8a' }}>
-                          {view === 'bmd' ? res.mAB.toFixed(3) : res.vA.toFixed(3)}
-                        </div>
-                      </div>
-                      <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0.5rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>End</div>
-                        <div style={{ fontWeight: 'bold', color: '#1e3a8a' }}>
-                          {view === 'bmd' ? res.mBA.toFixed(3) : res.vB.toFixed(3)}
-                        </div>
-                      </div>
-                      <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0.5rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Maximum</div>
-                        <div style={{ fontWeight: 'bold', color: '#059669' }}>
-                          {Math.max(...diagramData.map(d => Math.abs(d.val))).toFixed(3)}
-                        </div>
-                      </div>
-                      <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0.5rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Length</div>
-                        <div style={{ fontWeight: 'bold', color: '#6b7280' }}>
-                          {res.L.toFixed(2)} m
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </>
-          )}
+            );
+          })()}
 
           {/* Results */}
           {results && (
